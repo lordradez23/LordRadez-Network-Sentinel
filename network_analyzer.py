@@ -1,7 +1,7 @@
 """
-Network Security Analyzer (Network Sentinel)
+LordRadez-Network-Sentinel
 Developed by: lordradez
-Description: Real-time packet capture, analysis, and visualization tool.
+Description: Real-time network intelligence and security monitoring tool.
 """
 from scapy.all import sniff, IP, TCP, UDP
 from collections import defaultdict
