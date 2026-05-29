@@ -96,8 +96,46 @@ class NetworkSentinel:
             "Alert": alert_msg
         })
 
-    def start(self) -> None:
-        """Initialize packet sniffing."""
+    def _simulate_packets(self) -> None:
+        """Generates mock traffic for demonstration purposes."""
+        logger.info("Entering Simulation Mode. Generating mock traffic...")
+        mock_ips = ["192.168.1.10", "10.0.0.5", "172.16.0.22", "8.8.8.8"]
+        
+        for i in range(self.capture_count):
+            # Simulate a normal packet or a threat
+            src = mock_ips[i % len(mock_ips)]
+            dst = "192.168.1.1"
+            sport = 443
+            dport = 80
+            proto = 6 # TCP default
+            
+            # Artificial threat scenarios
+            if i > 70: # Simulate a DoS from the first IP
+                src = mock_ips[0]
+            elif i % 15 == 0: # Simulate a suspicious port access
+                dport = 21 # FTP
+            
+            # Create a mock object that mimics a Scapy packet
+            class MockPacket:
+                def __init__(self, s, d, sp, dp, pr):
+                    self.layers = {
+                        'IP': type('IP', (), {'src': s, 'dst': d, 'proto': pr}),
+                        'TCP': type('TCP', (), {'sport': sp, 'dport': dp})
+                    }
+                def haslayer(self, cls):
+                    return cls.__name__ in self.layers
+                def __getitem__(self, cls):
+                    return self.layers[cls.__name__]
+
+            self.process_packet(MockPacket(src, dst, sport, dport, proto))
+            time.sleep(0.05) # Realistic flow
+
+    def start(self, simulate: bool = False) -> None:
+        """Initialize packet sniffing or simulation."""
+        if simulate:
+            self._simulate_packets()
+            return
+
         try:
             iface = conf.iface
             logger.info(f"Sentinel active on interface: {iface}")
@@ -110,16 +148,18 @@ class NetworkSentinel:
             )
         except PermissionError:
             logger.error("Root/Admin privileges required for packet capture.")
+            logger.info("Try running with --simulate to see a demo without privileges.")
             sys.exit(1)
         except Exception as e:
             logger.error(f"Capture Failure: {e}")
             if any(x in str(e) for x in ["Npcap", "WinPcap"]):
                 logger.info("Tip: Install Npcap from https://npcap.com/")
-            sys.exit(1)
+            logger.info("Running in simulation mode as fallback...")
+            self._simulate_packets()
 
     def export_data(self) -> None:
         """Save results to CSV if pandas is available."""
-        if pd and self.packet_data:
+        if pd is not None and self.packet_data:
             df = pd.DataFrame(self.packet_data)
             df.to_csv(self.csv_file, index=False)
             logger.info(f"Security report exported to {self.csv_file}")
@@ -179,9 +219,11 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--count", type=int, default=100, help="Packet capture count")
     parser.add_argument("-t", "--threshold", type=int, default=50, help="DoS detection threshold")
     
+    parser.add_argument("-s", "--simulate", action="store_true", help="Run in simulation mode (demo)")
+    
     args = parser.parse_args()
 
     sentinel = NetworkSentinel(capture_count=args.count, dos_threshold=args.threshold)
-    sentinel.start()
+    sentinel.start(simulate=args.simulate)
     sentinel.export_data()
     sentinel.run_analytics()
