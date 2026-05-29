@@ -1,6 +1,6 @@
 # LordRadez Network Sentinel
 
-![Network Security Banner](https://raw.githubusercontent.com/lordradez/network-security-analyzer/main/assets/banner.png)
+![Network Security Banner](assets/banner.png)
 
 > **A professional-grade Python suite for real-time packet inspection, threat detection, and traffic visualization.**
 
