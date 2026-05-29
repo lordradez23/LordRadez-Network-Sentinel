@@ -90,10 +90,24 @@ pip install scapy matplotlib pandas
 ```
 
 ### Usage
-Run the Sentinel with administrative privileges:
+Run the Sentinel with administrative privileges. You can now use command-line arguments for configuration:
 ```bash
+# Standard run
 python network_analyzer.py
+
+# Custom capture count and DoS threshold
+python network_analyzer.py --count 500 --threshold 100
 ```
+
+---
+
+## Configuration
+The tool supports dynamic configuration via CLI arguments:
+
+| Argument | Long Form | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `-c` | `--count` | `100` | Number of packets to capture. |
+| `-t` | `--threshold` | `50` | Packet threshold before flagging an IP for DoS. |
 
 ---
 

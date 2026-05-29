@@ -1,5 +1,17 @@
-import sys
+"""
+LordRadez-Network-Sentinel
+Developed by: lordradez
+Description: Professional real-time network intelligence and security monitoring tool.
+"""
 
+import sys
+import time
+import logging
+import argparse
+from collections import defaultdict
+from typing import Any, Dict, List, Optional
+
+# --- Dependency Check ---
 try:
     from scapy.all import sniff, IP, TCP, UDP, conf
 except ImportError:
@@ -9,156 +21,167 @@ except ImportError:
 try:
     import pandas as pd
 except ImportError:
-    print("Error: Pandas is not installed. Run 'pip install pandas'.")
-    sys.exit(1)
+    pd = None
+    print("Warning: Pandas not found. CSV export will be disabled.")
 
 try:
     import matplotlib.pyplot as plt
 except ImportError:
     plt = None
-    print("Shield: Matplotlib not found. Visualization will be skipped.")
+    print("Warning: Matplotlib not found. Visualization will be disabled.")
 
-from collections import defaultdict
-import time
+# --- Configuration & Logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("alerts.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("NetworkSentinel")
 
-# -------------------- CONFIG --------------------
-CAPTURE_COUNT = 100
-DOS_THRESHOLD = 50
-SUSPICIOUS_PORTS = {21, 23, 3389}  # FTP, Telnet, RDP
-LOG_FILE = "alerts.log"
-CSV_FILE = "network_report.csv"
+class NetworkSentinel:
+    def __init__(self, capture_count: int = 100, dos_threshold: int = 50):
+        self.capture_count = capture_count
+        self.dos_threshold = dos_threshold
+        self.suspicious_ports = {21, 23, 3389}  # FTP, Telnet, RDP
+        self.ip_counter = defaultdict(int)
+        self.packet_data: List[Dict[str, Any]] = []
+        self.csv_file = "network_report.csv"
 
-# -------------------- DATA STRUCTURES --------------------
-ip_counter = defaultdict(int)
-packet_data = []
+    def process_packet(self, packet: Any) -> None:
+        """Heuristic analysis of incoming packets."""
+        if not packet.haslayer(IP):
+            return
 
-# -------------------- LOGGING FUNCTION --------------------
-def log_alert(message):
-    try:
-        with open(LOG_FILE, "a") as f:
-            f.write(f"{time.ctime()} - {message}\n")
-    except Exception as e:
-        print(f"Logging Error: {e}")
-
-# -------------------- PACKET PROCESSING --------------------
-def process_packet(packet):
-    if packet.haslayer(IP):
         src = packet[IP].src
         dst = packet[IP].dst
         proto = packet[IP].proto
         sport = None
         dport = None
-        alert = ""
+        alert_msg = ""
 
-        # TCP packet
+        # Port reconnaissance detection
         if packet.haslayer(TCP):
-            sport = packet[TCP].sport
-            dport = packet[TCP].dport
-            if dport in SUSPICIOUS_PORTS:
-                alert = f"[ALERT] Suspicious TCP port: {src} -> {dst}:{dport}"
-                print(alert)
-                log_alert(alert)
-
-        # UDP packet
+            sport, dport = packet[TCP].sport, packet[TCP].dport
+            if dport in self.suspicious_ports:
+                alert_msg = f"Suspicious TCP Access: {src} -> {dst}:{dport}"
+        
         elif packet.haslayer(UDP):
-            sport = packet[UDP].sport
-            dport = packet[UDP].dport
-            if dport in SUSPICIOUS_PORTS:
-                alert = f"[ALERT] Suspicious UDP port: {src} -> {dst}:{dport}"
-                print(alert)
-                log_alert(alert)
+            sport, dport = packet[UDP].sport, packet[UDP].dport
+            if dport in self.suspicious_ports:
+                alert_msg = f"Suspicious UDP Access: {src} -> {dst}:{dport}"
 
-        # DoS detection
-        ip_counter[src] += 1
-        if ip_counter[src] > DOS_THRESHOLD:
-            alert = f"[ALERT] Possible DoS attack from {src} (Packets: {ip_counter[src]})"
-            print(alert)
-            log_alert(alert)
+        if alert_msg:
+            logger.warning(alert_msg)
 
-        # Print packet info
-        info = f"{time.ctime()} | {src} -> {dst} | Protocol: {proto} | Sport: {sport} | Dport: {dport}"
-        print(info)
+        # DoS detection logic
+        self.ip_counter[src] += 1
+        if self.ip_counter[src] > self.dos_threshold:
+            dos_msg = f"Potential DoS Attack: {src} ({self.ip_counter[src]} packets)"
+            logger.critical(dos_msg)
+            alert_msg = dos_msg if not alert_msg else f"{alert_msg} | {dos_msg}"
 
-        # Save packet info
-        packet_data.append({
+        # General logging
+        logger.info(f"{src} -> {dst} | Proto: {proto} | Ports: {sport}->{dport}")
+
+        self.packet_data.append({
             "Timestamp": time.ctime(),
             "Source": src,
             "Destination": dst,
             "Protocol": proto,
             "Source Port": sport,
             "Destination Port": dport,
-            "Alert": alert
+            "Alert": alert_msg
         })
 
-# -------------------- CAPTURE --------------------
-def start_sniffing():
-    try:
-        # Detect interface
-        target_iface = conf.iface
-        print(f"Capturing packets on interface: {target_iface}")
-        print("Detection (DoS and Suspicious Ports) active. Press Ctrl+C to stop early.")
-        
-        sniff(
-            iface=target_iface,
-            count=CAPTURE_COUNT,
-            prn=process_packet
-        )
-    except PermissionError:
-        print("\nERROR: Permission Denied. Please run as Administrator (Windows) or with sudo (Linux).")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\nERROR during packet capture: {e}")
-        if "Npcap" in str(e) or "WinPcap" in str(e):
-            print("Ensure Npcap is installed: https://npcap.com/")
-        sys.exit(1)
-
-start_sniffing()
-
-# -------------------- SAVE CSV --------------------
-if packet_data:
-    df = pd.DataFrame(packet_data)
-    df.to_csv(CSV_FILE, index=False)
-    print(f"\nCSV report saved as {CSV_FILE}")
-else:
-    print("\nNo packets captured. Skipping CSV export.")
-
-# -------------------- SUMMARY --------------------
-print("\n---- SUMMARY STATISTICS ----")
-total_packets = len(packet_data)
-if total_packets > 0:
-    tcp_packets = sum(1 for p in packet_data if p["Protocol"] == 6)
-    udp_packets = sum(1 for p in packet_data if p["Protocol"] == 17)
-    top_talkers = sorted(ip_counter.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    print(f"Total Packets Captured: {total_packets}")
-    print(f"TCP Packets: {tcp_packets}, UDP Packets: {udp_packets}")
-    print("Top 5 Source IPs by Packet Count:")
-    for ip, count in top_talkers:
-        print(f"{ip}: {count} packets")
-
-    # -------------------- VISUALIZATION --------------------
-    if plt and total_packets > 0:
+    def start(self) -> None:
+        """Initialize packet sniffing."""
         try:
-            plt.figure(figsize=(10,5))
+            iface = conf.iface
+            logger.info(f"Sentinel active on interface: {iface}")
+            logger.info(f"Capturing {self.capture_count} packets. Press Ctrl+C to abort.")
             
-            # TCP vs UDP Bar Chart
-            plt.subplot(1,2,1)
-            plt.bar(['TCP','UDP'], [tcp_packets, udp_packets], color=['blue','green'])
-            plt.title('TCP vs UDP Packets')
-            plt.ylabel('Number of Packets')
+            sniff(
+                iface=iface,
+                count=self.capture_count,
+                prn=self.process_packet
+            )
+        except PermissionError:
+            logger.error("Root/Admin privileges required for packet capture.")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Capture Failure: {e}")
+            if any(x in str(e) for x in ["Npcap", "WinPcap"]):
+                logger.info("Tip: Install Npcap from https://npcap.com/")
+            sys.exit(1)
 
-            # Top 5 talkers Bar Chart
-            plt.subplot(1,2,2)
-            ips = [ip for ip,_ in top_talkers]
-            counts = [count for _,count in top_talkers]
-            plt.bar(ips, counts, color='red')
-            plt.title('Top 5 Source IPs')
-            plt.ylabel('Packet Count')
+    def export_data(self) -> None:
+        """Save results to CSV if pandas is available."""
+        if pd and self.packet_data:
+            df = pd.DataFrame(self.packet_data)
+            df.to_csv(self.csv_file, index=False)
+            logger.info(f"Security report exported to {self.csv_file}")
+        elif not self.packet_data:
+            logger.info("No packets captured for export.")
+
+    def run_analytics(self) -> None:
+        """Generate summary and visualizations."""
+        total = len(self.packet_data)
+        if total == 0:
+            logger.info("Insufficient data for analytics.")
+            return
+
+        tcp_count = sum(1 for p in self.packet_data if p["Protocol"] == 6)
+        udp_count = sum(1 for p in self.packet_data if p["Protocol"] == 17)
+        top_talkers = sorted(self.ip_counter.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        print("\n" + "="*30)
+        print("SECURITY SUMMARY STATISTICS")
+        print("="*30)
+        print(f"Total Packets: {total}")
+        print(f"TCP/UDP Ratio: {tcp_count}/{udp_count}")
+        print("\nTOP 5 SOURCE IPs:")
+        for ip, count in top_talkers:
+            print(f"- {ip}: {count} packets")
+        print("="*30 + "\n")
+
+        if plt and total > 0:
+            self._display_charts(tcp_count, udp_count, top_talkers)
+
+    def _display_charts(self, tcp_count: int, udp_count: int, top_talkers: List) -> None:
+        """Internal method for plot rendering."""
+        try:
+            plt.figure(figsize=(12, 6))
+            
+            # Protocol Distribution
+            plt.subplot(1, 2, 1)
+            plt.bar(['TCP', 'UDP'], [tcp_count, udp_count], color=['#2c3e50', '#27ae60'])
+            plt.title('Protocol Intensity')
+            plt.ylabel('Packets')
+
+            # Top Talkers
+            plt.subplot(1, 2, 2)
+            ips = [x[0] for x in top_talkers]
+            counts = [x[1] for x in top_talkers]
+            plt.bar(ips, counts, color='#c0392b')
+            plt.title('Top Network Talkers')
             plt.xticks(rotation=45)
 
             plt.tight_layout()
             plt.show()
         except Exception as e:
-            print(f"Visualization Error: {e}")
-else:
-    print("No data captured to display statistics.")
+            logger.error(f"Visualization aborted: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="LordRadez-Network-Sentinel")
+    parser.add_argument("-c", "--count", type=int, default=100, help="Packet capture count")
+    parser.add_argument("-t", "--threshold", type=int, default=50, help="DoS detection threshold")
+    
+    args = parser.parse_args()
+
+    sentinel = NetworkSentinel(capture_count=args.count, dos_threshold=args.threshold)
+    sentinel.start()
+    sentinel.export_data()
+    sentinel.run_analytics()
